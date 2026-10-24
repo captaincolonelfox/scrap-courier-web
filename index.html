@@ -92,6 +92,7 @@ body {
 		</style>
 		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
 <link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
+<link rel="manifest" href="index.manifest.json">
 
 	</head>
 	<body>
@@ -111,8 +112,8 @@ body {
 
 		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":9911328,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
-const GODOT_THREADS_ENABLED = false;
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":11834856,"index.wasm":38820072},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
+const GODOT_THREADS_ENABLED = true;
 const engine = new Engine(GODOT_CONFIG);
 
 (function () {
@@ -166,38 +167,46 @@ const engine = new Engine(GODOT_CONFIG);
 		threads: GODOT_THREADS_ENABLED,
 	});
 
+	// Based on Godot 4.7.2's default shell. Wait for actual SW control before
+	// reloading: register() alone resolves before installation/activation.
+	const isolationReloadKey = 'scrap-isolation:' + new URL(GODOT_CONFIG['serviceWorker'], location.href).pathname;
 	if (missing.length !== 0) {
-		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
-			let serviceWorkerRegistrationPromise;
-			try {
-				serviceWorkerRegistrationPromise = navigator.serviceWorker.getRegistration();
-			} catch (err) {
-				serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
-			}
-			// There's a chance that installing the service worker would fix the issue
-			Promise.race([
-				serviceWorkerRegistrationPromise.then((registration) => {
-					if (registration != null) {
-						return Promise.reject(new Error('Service worker already exists.'));
-					}
-					return registration;
-				}).then(() => engine.installServiceWorker()),
-				// For some reason, `getRegistration()` can stall
-				new Promise((resolve) => {
-					setTimeout(() => resolve(), 2000);
-				}),
-			]).then(() => {
-				// Reload if there was no error.
-				window.location.reload();
-			}).catch((err) => {
-				console.error('Error while registering service worker:', err);
-			});
+		const onlyIsolationMissing = missing.every((feature) =>
+			feature.startsWith('Cross-Origin Isolation') || feature.startsWith('SharedArrayBuffer'));
+		if (onlyIsolationMissing && GODOT_CONFIG['serviceWorker'] && 'serviceWorker' in navigator) {
+			(async () => {
+				if (sessionStorage.getItem(isolationReloadKey)) {
+					sessionStorage.removeItem(isolationReloadKey);
+					throw new Error('Unable to prepare the game in this browser. Please reload or try another browser.');
+				}
+				setStatusMode('progress');
+				await navigator.serviceWorker.register(GODOT_CONFIG['serviceWorker']);
+				const registration = await navigator.serviceWorker.ready;
+				if (!navigator.serviceWorker.controller) {
+					await new Promise((resolve, reject) => {
+						const timeout = setTimeout(() => {
+							navigator.serviceWorker.removeEventListener('controllerchange', controlled);
+							reject(new Error('Preparing the game took too long. Please reload to retry.'));
+						}, 15000);
+						function controlled() {
+							if (navigator.serviceWorker.controller) {
+								clearTimeout(timeout);
+								navigator.serviceWorker.removeEventListener('controllerchange', controlled);
+								resolve();
+							}
+						}
+						navigator.serviceWorker.addEventListener('controllerchange', controlled);
+						registration.active.postMessage('claim');
+					});
+				}
+				sessionStorage.setItem(isolationReloadKey, 'pending');
+				location.reload();
+			})().catch(displayFailureNotice);
 		} else {
-			// Display the message as usual
-			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
-			displayFailureNotice(missingMsg + missing.join('\n'));
+			displayFailureNotice('The following features required to run the game are missing:\n' + missing.join('\n'));
 		}
 	} else {
+		sessionStorage.removeItem(isolationReloadKey);
 		setStatusMode('progress');
 		engine.startGame({
 			'onProgress': function (current, total) {
