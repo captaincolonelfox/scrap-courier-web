@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1793462243|2452846';
+const CACHE_VERSION = '1794061417|2144331';
 /** @type {string} */
 const CACHE_PREFIX = 'Scrap Courier-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
